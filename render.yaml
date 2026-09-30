@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: dailydrop
+    runtime: node
+    plan: 0.5c-512mb
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    disk:
+      name: dailydrop-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 22.13.0
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: /var/data/dailydrop.sqlite
+      - key: ALLOW_REGISTRATION
+        value: "true"
+      - key: ADMIN_USERNAMES
+        sync: false
+      - key: TRUST_PROXY_HOPS
+        value: "1"
