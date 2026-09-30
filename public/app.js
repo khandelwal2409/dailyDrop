@@ -25,6 +25,12 @@ function el(tag, attrs = {}, children = []) {
   }
   return node;
 }
+function svg(tag, attrs = {}, children = []) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  for (const child of children) node.append(child);
+  return node;
+}
 function button(text, action, style = 'secondary', attrs = {}) {
   return el('button', { type: 'button', class: `button ${style}`, text, onclick: action, ...attrs });
 }
@@ -32,7 +38,22 @@ function field(label, name, type = 'text', value = '', options = {}) {
   const control = type === 'textarea'
     ? el('textarea', { id: name, name, maxlength: options.maxlength ?? 500, required: options.required ? '' : null }, value)
     : el('input', { id: name, name, type, value, min: options.min, max: options.max, step: options.step, maxlength: options.maxlength, required: options.required ? '' : null, autocomplete: options.autocomplete });
-  const wrap = el('div', { class: 'field' }, [el('label', { for: name, text: label }), control]);
+  let input = control;
+  if (type === 'password') {
+    const icon = svg('svg', { class: 'password-toggle-icon', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' }, [
+      svg('path', { d: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z' }),
+      svg('circle', { cx: '12', cy: '12', r: '3' }),
+    ]);
+    const toggle = el('button', { type: 'button', class: 'password-toggle', 'aria-label': 'Show password', title: 'Show password' }, icon);
+    toggle.addEventListener('click', () => {
+      const isVisible = control.type === 'password';
+      control.type = isVisible ? 'text' : 'password';
+      toggle.setAttribute('aria-label', `${isVisible ? 'Hide' : 'Show'} password`);
+      toggle.title = `${isVisible ? 'Hide' : 'Show'} password`;
+    });
+    input = el('div', { class: 'password-input-wrap' }, [control, toggle]);
+  }
+  const wrap = el('div', { class: 'field' }, [el('label', { for: name, text: label }), input]);
   return { wrap, control };
 }
 function selectField(label, name, options, value) {

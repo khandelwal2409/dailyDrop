@@ -76,6 +76,11 @@ a { color: inherit; }
 .field { display: grid; gap: 6px; min-width: 0; }
 .field label, .field-label { color: #4d574f; font-size: 11px; font-weight: 700; }
 .field input, .field select, .field textarea, .control { width: 100%; min-height: 40px; padding: 9px 11px; border: 1px solid #ccd4cc; border-radius: 4px; background: var(--surface); color: var(--ink); font-size: 13px; }
+.password-input-wrap { position: relative; }
+.password-input-wrap input { padding-right: 42px; }
+.password-toggle { position: absolute; top: 1px; right: 1px; width: 38px; height: 38px; display: grid; place-items: center; border: 0; border-radius: 3px; background: transparent; color: var(--muted); cursor: pointer; }
+.password-toggle:hover { color: var(--ink); }
+.password-toggle-icon { width: 17px; height: 17px; }
 .field textarea { min-height: 85px; resize: vertical; }
 .field input[type="date"], .field input[type="month"] { min-width: 150px; }
 .field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
