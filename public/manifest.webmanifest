@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "DailyDrop | Delivery ledger",
+  "short_name": "DailyDrop",
+  "description": "A clear daily record of household deliveries, bills, and payments.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#edf4ff",
+  "theme_color": "#163d75",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

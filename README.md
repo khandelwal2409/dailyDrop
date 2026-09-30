@@ -16,6 +16,10 @@ npm start
 
 Open `http://localhost:3000`. `npm run dev` starts Node's watch mode for local development, and `npm test` runs the API integration test against an isolated temporary database. The first SQLite connection may print Node's experimental-module warning; SQLite is included with the supported Node runtime and needs no native package installation.
 
+## Install on a phone
+
+Deploy over HTTPS, open DailyDrop in the mobile browser, and choose **Add to Home Screen** (or **Install app**) from the browser menu. The installed app opens without browser controls. DailyDrop caches its interface shell for launch, but sign-in and ledger data still require a network connection.
+
 Set the initial administrator username before starting the app and registering that account. For example, in PowerShell:
 
 ```powershell
