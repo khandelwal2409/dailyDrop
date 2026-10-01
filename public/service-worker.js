@@ -1,14 +1,21 @@
-const CACHE_NAME = 'dailydrop-shell-v2';
+const CACHE_NAME = 'dailydrop-shell-v4';
 const SHELL_FILES = [
   '/',
+  '/seller',
   '/index.html',
+  '/seller.html',
   '/styles.css',
   '/app.js',
   '/manifest.webmanifest',
+  '/seller-manifest.webmanifest',
   '/icon.svg',
+  '/seller-icon.svg',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/icons/apple-touch-icon.png',
+  '/icons/seller-icon-192.png',
+  '/icons/seller-icon-512.png',
+  '/icons/seller-apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {

@@ -1,10 +1,11 @@
 const appRoot = document.querySelector('#app');
 const toast = document.querySelector('#toast');
+const sellerAccessUrl = window.location.pathname.replace(/\/+$/, '') === '/seller';
 const moneyFormat = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const fullDateFormat = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 const monthFormat = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
 const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const state = { user: null, view: 'daily', authMode: 'login', date: today(), month: currentMonth(), products: [], entries: [], busy: false, message: '' };
+const state = { user: null, view: sellerAccessUrl ? 'seller' : 'daily', authMode: 'login', date: today(), month: currentMonth(), products: [], entries: [], busy: false, message: '' };
 let toastTimer;
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -104,7 +105,7 @@ function renderAuth(config) {
   const tabs = el('div', { class: 'auth-tabs', role: 'tablist', 'aria-label': 'Account access' });
   const loginTab = el('button', { type: 'button', class: `auth-tab ${state.authMode === 'login' ? 'active' : ''}`, role: 'tab', 'aria-selected': state.authMode === 'login', text: 'Sign in', onclick: () => { state.authMode = 'login'; render(); } });
   tabs.append(loginTab);
-  if (config.registrationEnabled) tabs.append(el('button', { type: 'button', class: `auth-tab ${state.authMode === 'register' ? 'active' : ''}`, role: 'tab', 'aria-selected': state.authMode === 'register', text: 'Register', onclick: () => { state.authMode = 'register'; render(); } }));
+  if (config.registrationEnabled && !sellerAccessUrl) tabs.append(el('button', { type: 'button', class: `auth-tab ${state.authMode === 'register' ? 'active' : ''}`, role: 'tab', 'aria-selected': state.authMode === 'register', text: 'Register', onclick: () => { state.authMode = 'register'; render(); } }));
   panel.append(tabs);
   const form = el('form', { class: 'form-stack' });
   const username = field('Username', 'username', 'text', '', { required: true, maxlength: 32, autocomplete: 'username' });
@@ -130,7 +131,9 @@ function renderAuth(config) {
     try {
       const endpoint = state.authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const result = await api(endpoint, { method: 'POST', body });
+      if (sellerAccessUrl && !result.user.isSeller) { window.location.replace('/'); return; }
       state.user = result.user;
+      if (sellerAccessUrl) state.view = 'seller';
       await refreshData();
       render();
     } catch (error) {
@@ -140,14 +143,18 @@ function renderAuth(config) {
     }
   });
   panel.append(form);
-  appRoot.replaceChildren(el('main', { class: 'auth-wrap' }, [aside, el('div', { class: 'auth-main' }, panel)]));
+  appRoot.replaceChildren(el('main', { class: `auth-wrap ${sellerAccessUrl ? 'seller-route' : ''}` }, [aside, el('div', { class: 'auth-main' }, panel)]));
 }
 
 const views = [
   ['daily', 'Daily', '◷'], ['bill', 'Bill', '₹'], ['report', 'Report', '▤'],
-  ['products', 'Products', '＋'], ['profile', 'Profile', '○'], ['admin', 'Admin', '▦'],
+  ['products', 'Products', '＋'], ['profile', 'Profile', '○'], ['seller', 'Seller', '▦'],
 ];
-function allowedViews() { return views.filter(([key]) => key !== 'admin' || state.user?.isAdmin); }
+function allowedViews() {
+  return views.filter(([key]) => sellerAccessUrl
+    ? ['seller', 'profile'].includes(key) && (key !== 'seller' || state.user?.isSeller)
+    : key !== 'seller');
+}
 function navigate(view) { state.view = view; render(); }
 function renderShell() {
   const initials = (state.user.fullName || state.user.username).slice(0, 1).toUpperCase();
@@ -158,7 +165,7 @@ function renderShell() {
   sidebar.append(nav);
   sidebar.append(el('div', { class: 'sidebar-bottom' }, el('div', { class: 'user-chip' }, [
     el('span', { class: 'avatar', text: initials }),
-    el('span', { class: 'user-chip-copy' }, [el('strong', { text: state.user.fullName || state.user.username }), el('small', { text: state.user.isAdmin ? 'Administrator' : `@${state.user.username}` })]),
+    el('span', { class: 'user-chip-copy' }, [el('strong', { text: state.user.fullName || state.user.username }), el('small', { text: state.user.isSeller ? 'Seller' : `@${state.user.username}` })]),
   ])));
   const title = views.find(([key]) => key === state.view)?.[1] || 'Daily';
   const topbar = el('header', { class: 'topbar' }, [
@@ -169,7 +176,7 @@ function renderShell() {
     ] : []),
   ]);
   const main = el('div', { class: 'main-area' }, [topbar, el('main', { class: 'page-content' })]);
-  const shell = el('div', { class: 'app-shell' }, [sidebar, main]);
+  const shell = el('div', { class: `app-shell ${sellerAccessUrl ? 'seller-route' : ''}` }, [sidebar, main]);
   const mobileNav = el('nav', { class: 'mobile-nav', 'aria-label': 'Main navigation' });
   for (const [key, label, symbol] of allowedViews()) mobileNav.append(navButton(key, label, symbol, true));
   shell.append(mobileNav);
@@ -265,21 +272,27 @@ function stat(label, value, note) {
 function deliveryRow(product, isScheduled) {
   const entry = entryFor(product.id);
   const received = Boolean(entry && entry.quantity > 0);
+  const partiallyReceived = Boolean(received && entry.quantity < product.defaultQuantity);
   const missed = Boolean(entry && entry.quantity === 0);
-  const row = el('article', { class: `delivery-row ${received ? 'received' : missed ? 'missed' : ''}` });
-  row.append(el('div', { class: 'product-main' }, [el('strong', { text: product.name }), el('small', { text: `${money(entry?.unit_price ?? product.price)} / unit · ${money((entry?.quantity ?? product.defaultQuantity) * (entry?.unit_price ?? product.price))} at current qty` }), el('span', { class: 'schedule-tag', text: isScheduled ? scheduleLabel(product) : 'Unscheduled' })]));
-  const qty = el('input', { type: 'number', min: '1', max: '100000', step: '1', value: received ? entry.quantity : product.defaultQuantity, 'aria-label': `Quantity received for ${product.name}`, disabled: !received, onchange: async (event) => {
+  const row = el('article', { class: `delivery-row ${partiallyReceived ? 'partial-receipt' : received ? 'received' : missed ? 'missed' : ''}` });
+  row.append(el('div', { class: 'product-main' }, [
+    el('strong', { text: product.name }),
+    el('small', { text: `${money(entry?.unit_price ?? product.price)} / unit · ${received ? `${entry.quantity} received` : `${product.defaultQuantity} expected`}` }),
+    el('span', { class: 'schedule-tag', text: isScheduled ? scheduleLabel(product) : 'Unscheduled' }),
+    ...(partiallyReceived ? [el('span', { class: 'partial-receipt-label', text: `Partial · ${entry.quantity} of ${product.defaultQuantity} expected` })] : []),
+  ]));
+  const qty = el('input', { type: 'number', min: '1', max: '100000', step: '1', value: received ? entry.quantity : product.defaultQuantity, 'aria-label': `Quantity received for ${product.name}; ${product.defaultQuantity} expected`, onchange: async (event) => {
     const value = Number(event.target.value);
-    if (!Number.isInteger(value) || value <= 0 || value > 100000) { event.target.value = entry.quantity; return; }
+    if (!Number.isInteger(value) || value <= 0 || value > 100000) { event.target.value = received ? entry.quantity : product.defaultQuantity; return; }
     try { await setEntry(product, value); } catch (error) { formError(error); }
   } });
   const quantity = el('div', { class: 'quantity-control' }, [
-    el('button', { class: 'stepper', type: 'button', text: '−', 'aria-label': `Reduce quantity of ${product.name}`, disabled: !received, onclick: async () => { try { await setEntry(product, Math.max(1, Number(qty.value) - 1)); } catch (error) { formError(error); } } }),
+    el('button', { class: 'stepper', type: 'button', text: '−', 'aria-label': `Reduce quantity of ${product.name}`, onclick: async () => { try { await setEntry(product, Math.max(1, Number(qty.value) - 1)); } catch (error) { formError(error); } } }),
     qty,
-    el('button', { class: 'stepper', type: 'button', text: '+', 'aria-label': `Increase quantity of ${product.name}`, disabled: !received, onclick: async () => { try { await setEntry(product, Number(qty.value) + 1); } catch (error) { formError(error); } } }),
+    el('button', { class: 'stepper', type: 'button', text: '+', 'aria-label': `Increase quantity of ${product.name}`, onclick: async () => { try { await setEntry(product, Math.min(100000, Number(qty.value) + 1)); } catch (error) { formError(error); } } }),
   ]);
   const actions = el('div', { class: 'delivery-actions' });
-  actions.append(button(received ? 'Received ✓' : 'Received', async () => { try { await setEntry(product, received ? null : product.defaultQuantity); } catch (error) { formError(error); } }, received ? 'received-button small' : 'secondary small'));
+  actions.append(button(partiallyReceived ? 'Partial ✓' : received ? 'Received ✓' : 'Received', async () => { try { await setEntry(product, received ? null : product.defaultQuantity); } catch (error) { formError(error); } }, partiallyReceived ? 'partial-button small' : received ? 'received-button small' : 'secondary small'));
   actions.append(button(missed ? 'Missed ✓' : 'Missed', async () => { try { await setEntry(product, missed ? null : 0); } catch (error) { formError(error); } }, missed ? 'missed-button small' : 'secondary small'));
   row.append(quantity, actions);
   return row;
@@ -323,16 +336,28 @@ function buildCalendar(month, products, entries) {
     const scheduled = products.filter((product) => dayScheduled(product, date));
     const dayEntries = entries.filter((entry) => entry.delivery_date === date);
     const scheduledEntries = scheduled.map((product) => dayEntries.find((entry) => entry.product_id === product.id)).filter(Boolean);
-    const received = scheduledEntries.filter((entry) => entry.quantity > 0).length;
+    const scheduledProductsById = new Map(scheduled.map((product) => [product.id, product]));
+    const fullyReceived = scheduledEntries.filter((entry) => entry.quantity >= scheduledProductsById.get(entry.product_id).defaultQuantity).length;
+    const partiallyReceived = scheduledEntries.filter((entry) => entry.quantity > 0 && entry.quantity < scheduledProductsById.get(entry.product_id).defaultQuantity).length;
     const missed = scheduledEntries.filter((entry) => entry.quantity === 0).length;
+    const open = scheduled.length - scheduledEntries.length;
     let status = '';
     let mark = '';
     if (scheduled.length) {
-      if (received === scheduled.length) { status = 'received'; mark = `${received} received`; }
-      else if (received || missed) { status = missed === scheduled.length ? 'missed' : 'partial'; mark = missed === scheduled.length ? `${missed} missed` : `${received} in · ${scheduled.length - received - missed} open`; }
+      if (fullyReceived === scheduled.length) { status = 'received'; mark = `${fullyReceived} received`; }
+      else if (partiallyReceived) {
+        status = 'partial';
+        mark = `${partiallyReceived} partial · ${fullyReceived} received · ${missed} missed · ${open} open`;
+      } else if (missed === scheduled.length) { status = 'missed'; mark = `${missed} missed`; }
+      else if (fullyReceived || missed) { status = 'partial'; mark = `${fullyReceived} received · ${missed} missed · ${open} open`; }
     } else if (dayEntries.length) {
-      status = received ? 'received' : 'missed';
-      mark = received ? `${received} extra` : `${missed} missed`;
+      const productsById = new Map(products.map((product) => [product.id, product]));
+      const extras = dayEntries.map((entry) => ({ entry, product: productsById.get(entry.product_id) })).filter(({ product }) => product);
+      const extraPartials = extras.filter(({ entry, product }) => entry.quantity > 0 && entry.quantity < product.defaultQuantity).length;
+      const extraReceived = extras.filter(({ entry, product }) => entry.quantity >= product.defaultQuantity).length;
+      const extraMissed = extras.filter(({ entry }) => entry.quantity === 0).length;
+      status = extraPartials ? 'partial' : extraReceived ? 'received' : 'missed';
+      mark = extraPartials ? `${extraPartials} partial · ${extraReceived} extra` : extraReceived ? `${extraReceived} extra` : `${extraMissed} missed`;
     }
     const day = el('div', { class: `calendar-day ${status}`, title: mark ? `${date}: ${mark}` : date, role: 'button', tabindex: 0, onclick: async () => {
       state.date = date;
@@ -655,31 +680,31 @@ function renderProfile(content) {
   }, 'danger');
   content.append(el('div', { class: 'form-stack' }, [profilePanel, passwordPanel, el('div', { class: 'toolbar' }, signOut)]));
 }
-async function renderAdmin(content) {
-  content.append(...heading('Account operations', 'Bills across households.', 'Review monthly account totals and record payments without exposing one user’s record to another.'));
+async function renderSeller(content) {
+  content.append(...heading('Account operations', 'Accounts, subscriptions, payments.', 'Review registered users, their subscribed products, and monthly payment status.'));
   const [overview, bills] = await Promise.all([
-    api('/api/admin/overview'), api(`/api/admin/bills?month=${state.month}`),
+    api('/api/seller/overview'), api(`/api/seller/bills?month=${state.month}`),
   ]);
   content.append(el('div', { class: 'filter-row' }, [el('span', { class: 'eyebrow', text: monthLabel(state.month) }), monthPicker(() => render())]));
-  content.append(el('div', { class: 'admin-grid' }, [
+  content.append(el('div', { class: 'seller-grid' }, [
     stat('Accounts', overview.users, 'registered users'), stat('Products', overview.products, 'across all accounts'), stat('Month entries', overview.monthEntries, 'recorded this month'),
   ]));
   content.append(el('div', { class: 'stats-grid' }, [
     stat('Billed', money(bills.totals.billed), 'received entries'), stat('Collected', money(bills.totals.collected), 'recorded payments'), stat('Outstanding', money(bills.totals.outstanding), 'remaining balance'), stat('Directory', bills.rows.length, 'accounts in ledger'),
   ]));
   const section = el('section', { class: 'panel panel-pad' });
-  section.append(sectionHead('Monthly directory', 'Search an account, inspect product totals, or update the month payment.'));
-  const search = field('Search accounts', 'admin-search', 'search', '', { maxlength: 100 });
+  section.append(sectionHead('User directory', 'Search subscriptions and review or update payment status for the selected month.'));
+  const search = field('Search accounts', 'seller-search', 'search', '', { maxlength: 100 });
   const filter = el('div', { class: 'filter-row' }, search.wrap);
   section.append(filter);
   const tableScroll = el('div', { class: 'table-scroll' });
   const table = el('table', { class: 'data-table' });
   const head = el('thead', {}, el('tr', {}, [
-    el('th', { text: 'Account' }), el('th', { text: 'Products' }), el('th', { class: 'numeric', text: 'Billed' }), el('th', { class: 'numeric', text: 'Paid' }), el('th', { class: 'numeric', text: 'Due' }), el('th', { text: 'Status' }), el('th', { text: 'Record payment' }),
+    el('th', { text: 'Account' }), el('th', { text: 'Subscriptions' }), el('th', { class: 'numeric', text: 'Billed' }), el('th', { class: 'numeric', text: 'Paid' }), el('th', { class: 'numeric', text: 'Due' }), el('th', { text: 'Payment' }), el('th', { text: 'Record payment' }),
   ]));
   const body = el('tbody');
   for (const row of bills.rows) {
-    const productList = row.products.length ? row.products.map((item) => `${item.product} × ${item.quantity}`).join(', ') : 'No product entries';
+    const subscriptionSearch = row.subscriptions.map((product) => `${product.name} ${product.defaultQuantity} ${scheduleLabel(product)}`).join(', ');
     const amount = field(`Payment amount for ${row.username}`, `pay-amount-${row.userId}`, 'number', row.payment?.amount ?? '', { min: '.01', max: 100000000, step: '.01' });
     amount.wrap.querySelector('label').className = 'sr-only';
     const method = selectField(`Method for ${row.username}`, `pay-method-${row.userId}`, [['Cash', 'Cash'], ['UPI', 'UPI'], ['Card', 'Card'], ['Bank transfer', 'Bank transfer'], ['Other', 'Other']], row.payment?.method || 'Cash');
@@ -688,20 +713,25 @@ async function renderAdmin(content) {
       const paymentAmount = Number(amount.control.value);
       if (!paymentAmount) { notify('Enter a payment amount greater than zero.'); return; }
       try {
-        await api(`/api/admin/payments/${row.userId}/${state.month}`, { method: 'PUT', body: { amount: paymentAmount, method: method.control.value } });
+        await api(`/api/seller/payments/${row.userId}/${state.month}`, { method: 'PUT', body: { amount: paymentAmount, method: method.control.value } });
         notify('Payment saved.');
         render();
       } catch (error) { formError(error); }
     }, 'small');
-    const controls = el('div', { class: 'admin-payment-controls' }, [amount.control, method.control, save]);
+    const controls = el('div', { class: 'seller-payment-controls' }, [amount.control, method.control, save]);
     if (row.payment) controls.append(button('Undo', async () => {
       if (!window.confirm(`Undo ${row.username}'s payment for ${state.month}?`)) return;
-      try { await api(`/api/admin/payments/${row.userId}/${state.month}`, { method: 'DELETE' }); notify('Payment removed.'); render(); }
+      try { await api(`/api/seller/payments/${row.userId}/${state.month}`, { method: 'DELETE' }); notify('Payment removed.'); render(); }
       catch (error) { formError(error); }
     }, 'danger small'));
-    const account = el('div', { class: 'admin-user' }, [el('strong', { text: row.fullName || row.username }), el('small', { class: 'stat-note', text: `@${row.username} · ${productList}` })]);
-    const tr = el('tr', { 'data-search': `${row.username} ${row.fullName} ${productList}`.toLowerCase() }, [
-      el('td', {}, account), el('td', { text: `${row.products.length} products` }), el('td', { class: 'numeric', text: money(row.bill) }), el('td', { class: 'numeric', text: money(row.paid) }), el('td', { class: 'numeric', text: money(row.outstanding) }), el('td', {}, statusPill(row.status)), el('td', {}, controls),
+    const account = el('div', { class: 'seller-user' }, [el('strong', { text: row.fullName || row.username }), el('small', { class: 'stat-note', text: `@${row.username}` })]);
+    const products = row.subscriptions.length
+      ? el('div', { class: 'seller-subscriptions' }, row.subscriptions.map((product) => el('span', { text: `${product.name} · qty ${product.defaultQuantity} · ${scheduleLabel(product)}` })))
+      : el('span', { class: 'stat-note', text: 'No subscriptions' });
+    const paymentStatusLabel = { paid: 'Completed', partial: 'Partial', pending: 'Pending', 'no-bill': 'No bill' }[row.status] || row.status;
+    const paymentStatusCell = el('span', { class: `status-pill ${row.status}`, text: paymentStatusLabel });
+    const tr = el('tr', { 'data-search': `${row.username} ${row.fullName} ${subscriptionSearch}`.toLowerCase() }, [
+      el('td', {}, account), el('td', {}, products), el('td', { class: 'numeric', text: money(row.bill) }), el('td', { class: 'numeric', text: money(row.paid) }), el('td', { class: 'numeric', text: money(row.outstanding) }), el('td', {}, paymentStatusCell), el('td', {}, controls),
     ]);
     body.append(tr);
   }
@@ -738,7 +768,7 @@ async function render() {
     else if (state.view === 'report') await renderReport(content);
     else if (state.view === 'products') renderProducts(content);
     else if (state.view === 'profile') renderProfile(content);
-    else if (state.view === 'admin') await renderAdmin(content);
+    else if (state.view === 'seller') await renderSeller(content);
   } catch (error) {
     content.replaceChildren(el('div', { class: 'alert', text: error.message || 'Unable to load this view.' }));
   }
@@ -746,7 +776,9 @@ async function render() {
 async function start() {
   try {
     const result = await api('/api/me');
+    if (sellerAccessUrl && !result.user.isSeller) { window.location.replace('/'); return; }
     state.user = result.user;
+    if (sellerAccessUrl) state.view = 'seller';
     await refreshData();
   } catch {
     state.user = null;

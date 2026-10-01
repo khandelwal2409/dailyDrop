@@ -1,149 +1,334 @@
+import pg from 'pg';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const databasePath = resolve(process.env.DB_PATH || 'data/dailydrop.sqlite');
-mkdirSync(dirname(databasePath), { recursive: true });
+const databaseUrl = process.env.DATABASE_URL;
+export const databaseMode = process.env.NODE_ENV === 'production' || databaseUrl === 'memory:' ? 'postgres' : 'sqlite';
+if (databaseMode === 'postgres' && process.env.NODE_ENV === 'production' && !databaseUrl) {
+  throw new Error('DATABASE_URL must be set to a PostgreSQL connection string in production.');
+}
 
-export const db = new DatabaseSync(databasePath);
-db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
+let Pool = pg.Pool;
+if (databaseUrl === 'memory:') {
+  const { newDb } = await import('pg-mem');
+  Pool = newDb().adapters.createPg().Pool;
+}
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    password_salt TEXT NOT NULL,
-    full_name TEXT NOT NULL DEFAULT '',
-    email TEXT NOT NULL DEFAULT '',
-    phone TEXT NOT NULL DEFAULT '',
-    address TEXT NOT NULL DEFAULT '',
-    is_admin INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS sessions (
-    token_hash TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at INTEGER NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON sessions(expires_at);
-  CREATE TABLE IF NOT EXISTS products (
-    id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    price REAL NOT NULL CHECK (price >= 0),
-    default_quantity REAL NOT NULL DEFAULT 1 CHECK (default_quantity > 0),
-    schedule_type TEXT NOT NULL DEFAULT 'daily',
-    schedule_config TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE INDEX IF NOT EXISTS products_user_idx ON products(user_id);
-  CREATE TABLE IF NOT EXISTS entries (
-    id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    product_id INTEGER NOT NULL,
-    delivery_date TEXT NOT NULL,
-    quantity REAL NOT NULL CHECK (quantity >= 0),
-    product_name TEXT NOT NULL,
-    unit_price REAL NOT NULL CHECK (unit_price >= 0),
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, product_id, delivery_date)
-  );
-  CREATE INDEX IF NOT EXISTS entries_user_date_idx ON entries(user_id, delivery_date);
-  CREATE TABLE IF NOT EXISTS payments (
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    payment_month TEXT NOT NULL,
-    amount REAL NOT NULL CHECK (amount >= 0),
-    method TEXT NOT NULL,
-    note TEXT NOT NULL DEFAULT '',
-    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY(user_id, payment_month)
-  );
-`);
+export const pool = databaseMode === 'postgres' ? new Pool({
+  ...(databaseUrl !== 'memory:' ? {
+    connectionString: databaseUrl,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+  } : {}),
+}) : null;
 
-function ensureColumn(table, column, definition) {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (!columns.some((item) => item.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    return true;
+let sqlite;
+if (databaseMode === 'sqlite') {
+  const databasePath = resolve(process.env.DB_PATH || 'data/dailydrop.sqlite');
+  mkdirSync(dirname(databasePath), { recursive: true });
+  sqlite = new DatabaseSync(databasePath);
+  sqlite.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
+}
+
+function postgresSql(sql) {
+  let index = 0;
+  return sql.replace(/\?/g, () => `$${++index}`);
+}
+
+export const db = {
+  query(sql, params = []) {
+    if (databaseMode === 'postgres') return pool.query(postgresSql(sql), params);
+    const statement = sqlite.prepare(sql);
+    return Promise.resolve(/^\s*SELECT\b/i.test(sql) ? { rows: statement.all(...params) } : { rows: [], rowCount: statement.run(...params).changes });
+  },
+  prepare(sql) {
+    if (databaseMode === 'sqlite') {
+      let statement;
+      const getStatement = () => statement ??= sqlite.prepare(sql);
+      return {
+        async get(...params) {
+          return getStatement().get(...params.map((value) => typeof value === 'boolean' ? Number(value) : value));
+        },
+        async all(...params) {
+          return getStatement().all(...params.map((value) => typeof value === 'boolean' ? Number(value) : value));
+        },
+        async run(...params) {
+          const values = params.map((value) => typeof value === 'boolean' ? Number(value) : value);
+          if (/\bRETURNING\b/i.test(sql)) {
+            const row = getStatement().get(...values);
+            return { changes: row ? 1 : 0, lastInsertRowid: row?.id };
+          }
+          const result = getStatement().run(...values);
+          return { changes: result.changes, lastInsertRowid: result.lastInsertRowid };
+        },
+      };
+    }
+    return {
+      async get(...params) {
+        const result = await db.query(sql, params);
+        return result.rows[0];
+      },
+      async all(...params) {
+        const result = await db.query(sql, params);
+        return result.rows;
+      },
+      async run(...params) {
+        const result = await db.query(sql, params);
+        return { changes: result.rowCount, lastInsertRowid: result.rows[0]?.id };
+      },
+    };
+  },
+};
+
+let schemaInitialized = false;
+export async function initializeDatabase() {
+  if (schemaInitialized) return;
+  if (databaseMode === 'sqlite') {
+    initializeSqliteDatabase();
+    schemaInitialized = true;
+    return;
   }
-  return false;
-}
-
-ensureColumn('products', 'default_quantity', 'REAL NOT NULL DEFAULT 1');
-ensureColumn('products', 'schedule_type', "TEXT NOT NULL DEFAULT 'daily'");
-ensureColumn('products', 'schedule_config', "TEXT NOT NULL DEFAULT '{}'");
-const addedEntryName = ensureColumn('entries', 'product_name', "TEXT NOT NULL DEFAULT ''");
-const addedEntryPrice = ensureColumn('entries', 'unit_price', 'REAL NOT NULL DEFAULT 0');
-ensureColumn('entries', 'updated_at', 'TEXT');
-ensureColumn('payments', 'note', "TEXT NOT NULL DEFAULT ''");
-ensureColumn('payments', 'updated_by', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
-ensureColumn('payments', 'updated_at', 'TEXT');
-
-if (addedEntryName || addedEntryPrice) {
-  db.exec(`
-    UPDATE entries SET product_name = (SELECT name FROM products WHERE products.id = entries.product_id)
-    WHERE product_name = '';
-    UPDATE entries SET unit_price = (SELECT price FROM products WHERE products.id = entries.product_id)
-    WHERE ${addedEntryPrice ? '1 = 1' : "unit_price = 0"};
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      password_salt TEXT NOT NULL,
+      full_name TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      is_seller BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at BIGINT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON sessions(expires_at);
+    CREATE TABLE IF NOT EXISTS products (
+      id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      price DOUBLE PRECISION NOT NULL CHECK (price >= 0),
+      default_quantity DOUBLE PRECISION NOT NULL DEFAULT 1 CHECK (default_quantity > 0),
+      schedule_type TEXT NOT NULL DEFAULT 'daily',
+      schedule_config TEXT NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS products_user_idx ON products(user_id);
+    CREATE TABLE IF NOT EXISTS entries (
+      id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL,
+      delivery_date TEXT NOT NULL,
+      quantity DOUBLE PRECISION NOT NULL CHECK (quantity >= 0),
+      product_name TEXT NOT NULL,
+      unit_price DOUBLE PRECISION NOT NULL CHECK (unit_price >= 0),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, product_id, delivery_date)
+    );
+    CREATE INDEX IF NOT EXISTS entries_user_date_idx ON entries(user_id, delivery_date);
+    CREATE TABLE IF NOT EXISTS payments (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      payment_month TEXT NOT NULL,
+      amount DOUBLE PRECISION NOT NULL CHECK (amount >= 0),
+      method TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(user_id, payment_month)
+    );
+    CREATE TABLE IF NOT EXISTS app_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
+  await migratePostgresSellerRole();
+  schemaInitialized = true;
 }
-db.exec("UPDATE entries SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL; UPDATE payments SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL;");
 
-const productForeignKey = db.prepare('PRAGMA foreign_key_list(entries)').all()
-  .some((foreignKey) => foreignKey.table === 'products');
-if (productForeignKey) {
-  db.exec('PRAGMA foreign_keys = OFF; BEGIN;');
-  try {
-    db.exec(`
-      CREATE TABLE entries_migrated (
-        id INTEGER PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        product_id INTEGER NOT NULL,
-        delivery_date TEXT NOT NULL,
-        quantity REAL NOT NULL CHECK (quantity >= 0),
-        product_name TEXT NOT NULL DEFAULT '',
-        unit_price REAL NOT NULL DEFAULT 0,
-        updated_at TEXT,
-        UNIQUE(user_id, product_id, delivery_date)
-      );
-      INSERT INTO entries_migrated (id, user_id, product_id, delivery_date, quantity, product_name, unit_price, updated_at)
-        SELECT id, user_id, product_id, delivery_date, quantity, product_name, unit_price, updated_at FROM entries;
-      DROP TABLE entries;
-      ALTER TABLE entries_migrated RENAME TO entries;
-      CREATE INDEX IF NOT EXISTS entries_user_date_idx ON entries(user_id, delivery_date);
-      COMMIT;
+export async function migratePostgresSellerRole() {
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_seller BOOLEAN NOT NULL DEFAULT FALSE');
+  const roleMigration = await pool.query('SELECT 1 FROM app_migrations WHERE name = $1', ['seller-role-v1']);
+  if (!roleMigration.rowCount) {
+    const legacyRoleColumn = await pool.query(`SELECT 1 FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = 'is_admin'`);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (legacyRoleColumn.rowCount) await client.query('UPDATE users SET is_seller = is_admin');
+      await client.query('INSERT INTO app_migrations (name) VALUES ($1)', ['seller-role-v1']);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+}
+
+function initializeSqliteDatabase() {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      password_salt TEXT NOT NULL,
+      full_name TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      is_seller INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON sessions(expires_at);
+    CREATE TABLE IF NOT EXISTS products (
+      id INTEGER PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      price REAL NOT NULL CHECK (price >= 0),
+      default_quantity REAL NOT NULL DEFAULT 1 CHECK (default_quantity > 0),
+      schedule_type TEXT NOT NULL DEFAULT 'daily',
+      schedule_config TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS products_user_idx ON products(user_id);
+    CREATE TABLE IF NOT EXISTS entries (
+      id INTEGER PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL,
+      delivery_date TEXT NOT NULL,
+      quantity REAL NOT NULL CHECK (quantity >= 0),
+      product_name TEXT NOT NULL,
+      unit_price REAL NOT NULL CHECK (unit_price >= 0),
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, product_id, delivery_date)
+    );
+    CREATE INDEX IF NOT EXISTS entries_user_date_idx ON entries(user_id, delivery_date);
+    CREATE TABLE IF NOT EXISTS payments (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      payment_month TEXT NOT NULL,
+      amount REAL NOT NULL CHECK (amount >= 0),
+      method TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(user_id, payment_month)
+    );
+  `);
+
+  function ensureColumn(table, column, definition) {
+    const columns = sqlite.prepare(`PRAGMA table_info(${table})`).all();
+    if (!columns.some((item) => item.name === column)) {
+      sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      return true;
+    }
+    return false;
+  }
+
+  const addedSellerRole = ensureColumn('users', 'is_seller', 'INTEGER NOT NULL DEFAULT 0');
+  if (addedSellerRole) {
+    const userColumns = sqlite.prepare('PRAGMA table_info(users)').all();
+    if (userColumns.some((column) => column.name === 'is_admin')) sqlite.exec('UPDATE users SET is_seller = is_admin');
+  }
+  ensureColumn('products', 'default_quantity', 'REAL NOT NULL DEFAULT 1');
+  ensureColumn('products', 'schedule_type', "TEXT NOT NULL DEFAULT 'daily'");
+  ensureColumn('products', 'schedule_config', "TEXT NOT NULL DEFAULT '{}'");
+  const addedEntryName = ensureColumn('entries', 'product_name', "TEXT NOT NULL DEFAULT ''");
+  const addedEntryPrice = ensureColumn('entries', 'unit_price', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('entries', 'updated_at', 'TEXT');
+  ensureColumn('payments', 'note', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('payments', 'updated_by', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+  ensureColumn('payments', 'updated_at', 'TEXT');
+
+  if (addedEntryName || addedEntryPrice) {
+    sqlite.exec(`
+      UPDATE entries SET product_name = (SELECT name FROM products WHERE products.id = entries.product_id)
+      WHERE product_name = '';
+      UPDATE entries SET unit_price = (SELECT price FROM products WHERE products.id = entries.product_id)
+      WHERE ${addedEntryPrice ? '1 = 1' : 'unit_price = 0'};
     `);
-  } catch (error) {
-    db.exec('ROLLBACK');
-    throw error;
-  } finally {
-    db.exec('PRAGMA foreign_keys = ON;');
+  }
+  sqlite.exec("UPDATE entries SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL; UPDATE payments SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL;");
+
+  const productForeignKey = sqlite.prepare('PRAGMA foreign_key_list(entries)').all()
+    .some((foreignKey) => foreignKey.table === 'products');
+  if (productForeignKey) {
+    sqlite.exec('PRAGMA foreign_keys = OFF; BEGIN;');
+    try {
+      sqlite.exec(`
+        CREATE TABLE entries_migrated (
+          id INTEGER PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          product_id INTEGER NOT NULL,
+          delivery_date TEXT NOT NULL,
+          quantity REAL NOT NULL CHECK (quantity >= 0),
+          product_name TEXT NOT NULL DEFAULT '',
+          unit_price REAL NOT NULL DEFAULT 0,
+          updated_at TEXT,
+          UNIQUE(user_id, product_id, delivery_date)
+        );
+        INSERT INTO entries_migrated (id, user_id, product_id, delivery_date, quantity, product_name, unit_price, updated_at)
+          SELECT id, user_id, product_id, delivery_date, quantity, product_name, unit_price, updated_at FROM entries;
+        DROP TABLE entries;
+        ALTER TABLE entries_migrated RENAME TO entries;
+        CREATE INDEX IF NOT EXISTS entries_user_date_idx ON entries(user_id, delivery_date);
+        COMMIT;
+      `);
+    } catch (error) {
+      sqlite.exec('ROLLBACK');
+      throw error;
+    } finally {
+      sqlite.exec('PRAGMA foreign_keys = ON;');
+    }
   }
 }
 
 export const statements = {
   userByUsername: db.prepare('SELECT * FROM users WHERE username = ?'),
-  userById: db.prepare('SELECT id, username, full_name, email, phone, address, is_admin, created_at FROM users WHERE id = ?'),
-  insertUser: db.prepare('INSERT INTO users (username, password_hash, password_salt, full_name, email, is_admin) VALUES (?, ?, ?, ?, ?, ?)'),
-  productsForUser: db.prepare('SELECT * FROM products WHERE user_id = ? ORDER BY name COLLATE NOCASE'),
+  userById: db.prepare('SELECT id, username, full_name, email, phone, address, is_seller, created_at FROM users WHERE id = ?'),
+  insertUser: db.prepare('INSERT INTO users (username, password_hash, password_salt, full_name, email, is_seller) VALUES (?, ?, ?, ?, ?, ?) RETURNING id'),
+  productsForUser: db.prepare('SELECT * FROM products WHERE user_id = ? ORDER BY lower(name)'),
   productForUser: db.prepare('SELECT * FROM products WHERE id = ? AND user_id = ?'),
-  entriesForMonth: db.prepare("SELECT * FROM entries WHERE user_id = ? AND delivery_date >= ? AND delivery_date < ? ORDER BY delivery_date, product_name"),
+  entriesForMonth: db.prepare('SELECT * FROM entries WHERE user_id = ? AND delivery_date >= ? AND delivery_date < ? ORDER BY delivery_date, product_name'),
 };
 
-export function setAdminUsernames(usernames) {
+export async function setSellerUsernames(usernames) {
   if (usernames === null) return;
-  const update = db.prepare('UPDATE users SET is_admin = ? WHERE username = ?');
-  const rows = db.prepare('SELECT username FROM users').all();
+  if (databaseMode === 'sqlite') {
+    const update = sqlite.prepare('UPDATE users SET is_seller = ? WHERE username = ?');
+    const rows = sqlite.prepare('SELECT username FROM users').all();
+    const selected = new Set(usernames);
+    sqlite.exec('BEGIN');
+    try {
+      for (const row of rows) update.run(selected.has(row.username) ? 1 : 0, row.username);
+      sqlite.exec('COMMIT');
+    } catch (error) {
+      sqlite.exec('ROLLBACK');
+      throw error;
+    }
+    return;
+  }
+  const client = await pool.connect();
   const selected = new Set(usernames);
-  db.exec('BEGIN');
   try {
-    for (const row of rows) update.run(selected.has(row.username) ? 1 : 0, row.username);
-    db.exec('COMMIT');
+    await client.query('BEGIN');
+    await client.query('UPDATE users SET is_seller = username = ANY($1::text[])', [[...selected]]);
+    await client.query('COMMIT');
   } catch (error) {
-    db.exec('ROLLBACK');
+    await client.query('ROLLBACK');
     throw error;
+  } finally {
+    client.release();
   }
 }

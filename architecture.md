@@ -2,15 +2,17 @@
 
 ## System overview
 
-DailyDrop is a single-process web application with a static browser client and a Node.js/Express API backed by SQLite. The browser uses same-origin JSON requests and an HttpOnly session cookie, while the server owns authentication, validation, billing logic, and persistence.
+DailyDrop is a single-process web application with a static browser client and a Node.js/Express API. Local development uses SQLite; production uses PostgreSQL. The browser uses same-origin JSON requests and an HttpOnly session cookie, while the server owns authentication, validation, billing logic, and persistence.
 
 ```mermaid
 flowchart LR
-  User[User / Admin] --> Browser[Browser app in public/]
+  User[User / Seller] --> Browser[Browser app in public/]
   Browser -->|fetch JSON + cookie| API[Express API in src/server.js]
   API --> Validation[Input validation and auth checks]
-  Validation --> DB[SQLite database via src/db.js]
-  DB --> Reports[Bill / Report / Admin calculations]
+  Validation --> DB{Environment}
+  DB -->|Local| SQLite[SQLite via src/db.js]
+  DB -->|Render production| Postgres[PostgreSQL via src/db.js]
+  DB --> Reports[Bill / Report / Seller calculations]
   Reports --> Browser
 ```
 
@@ -18,8 +20,8 @@ flowchart LR
 
 - `public/`: static frontend assets (`index.html`, `styles.css`, `app.js`)
 - `src/server.js`: HTTP middleware, route handling, validation, session logic, billing/reporting endpoints
-- `src/db.js`: SQLite initialization, schema setup, migrations, and prepared statements
-- `data/`: runtime SQLite files and WAL state
+- `src/db.js`: SQLite/PostgreSQL selection, schema initialization, and parameterized queries
+- `scripts/migrate-sqlite-to-postgres.js`: one-time import of existing SQLite data
 - `test/`: integration tests for API behavior and security boundaries
 - `server.js` / `db.js`: compatibility entrypoints that re-export the source modules for the existing startup flow
 
@@ -31,7 +33,8 @@ When the app starts:
 
 - the project entrypoint loads `src/server.js`
 - Express creates the app and configures trust-proxy and security headers
-- SQLite is opened and schema/migration setup runs in `src/db.js`
+- SQLite is used locally; Render production connects to PostgreSQL and initializes its schema in `src/db.js`
+- If `SQLITE_MIGRATION_PATH` points to a legacy database, it is imported once before the server listens
 - the server binds to the configured port and begins listening
 
 ### 2. Browser load
@@ -45,7 +48,7 @@ The frontend reads and writes data through same-origin endpoints such as:
 - `/api/entries/:date/:productId`
 - `/api/payments/:month`
 - `/api/reports/monthly-totals`
-- `/api/admin/bills`
+- `/api/seller/bills`
 
 ### 3. Authentication flow
 
@@ -97,7 +100,7 @@ Stores account identity and profile metadata, including:
 - username
 - password hash and salt
 - profile fields
-- admin flag
+- seller access flag
 - created timestamp
 
 ### `sessions`
@@ -149,7 +152,7 @@ The server applies protections at the request boundary:
 - per-IP rate limiting on registration and login
 - generic login failures to avoid user enumeration
 - session checks on authenticated routes
-- admin-only checks on `/api/admin/*` endpoints
+- seller-only checks on `/api/seller/*` endpoints
 - parameter validation before database writes
 - prepared statements for all SQL execution
 
@@ -157,10 +160,10 @@ User-supplied strings are not rendered as HTML; they are passed through DOM text
 
 ## Operational notes
 
-- SQLite files live under `data/` by default and should be on persistent storage in production
-- Node’s built-in `node:sqlite` module is used, so no native dependency installation is required
+- Local SQLite is configured through `DB_PATH`; Render PostgreSQL is configured through `DATABASE_URL` and uses TLS
+- `node:sqlite` powers local storage and reads the legacy database during production import
 - the app is intentionally static and build-free; deployment is a Node service with a persistent database volume
-- `npm test` exercises the integration flow against an isolated temporary database and verifies the billing/security contract
+- `npm test` exercises the API against temporary SQLite and tests the PostgreSQL migration path with an in-memory compatible database
 
 ## Summary
 
@@ -168,6 +171,6 @@ The architecture is intentionally simple and explicit:
 
 - browser renders the interface and calls the API
 - Express routes validate and authorize requests
-- SQLite holds users, schedules, delivery history, and payments
+- SQLite holds local users, schedules, delivery history, and payments; PostgreSQL holds production data
 - historical snapshots ensure bills remain consistent over time
 - the app preserves a clear separation between user-facing behavior and database-backed accounting logic

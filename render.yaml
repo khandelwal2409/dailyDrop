@@ -15,11 +15,13 @@ services:
         value: 22.13.0
       - key: NODE_ENV
         value: production
-      - key: DB_PATH
+      - key: DATABASE_URL
+        sync: false
+      - key: SQLITE_MIGRATION_PATH
         value: /var/data/dailydrop.sqlite
       - key: ALLOW_REGISTRATION
         value: "true"
-      - key: ADMIN_USERNAMES
+      - key: SELLER_USERNAMES
         sync: false
       - key: TRUST_PROXY_HOPS
         value: "1"
