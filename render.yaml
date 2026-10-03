@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: 0.5c-512mb
     buildCommand: npm ci
-    startCommand: npm start
+    startCommand: node server.js
     healthCheckPath: /
     disk:
       name: dailydrop-data
