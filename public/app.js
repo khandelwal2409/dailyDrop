@@ -302,10 +302,13 @@ function deliveryRow(product, isScheduled) {
     if (!entry) { notify('Price will be saved when you record this delivery.'); return; }
     try { await setEntry(product, entry.quantity, value); } catch (error) { formError(error); }
   } });
-  const quantity = el('div', { class: 'quantity-control' }, [
+  const quantityControl = el('label', { class: 'daily-quantity-control' }, [
+    el('span', { text: 'Quantity received' }),
+    el('div', { class: 'quantity-control' }, [
     el('button', { class: 'stepper', type: 'button', text: '−', 'aria-label': `Reduce quantity of ${product.name}`, onclick: async () => { const unitPrice = readDailyPrice(); if (unitPrice === null) return; try { await setEntry(product, Math.max(1, Number(qty.value) - 1), unitPrice); } catch (error) { formError(error); } } }),
     qty,
     el('button', { class: 'stepper', type: 'button', text: '+', 'aria-label': `Increase quantity of ${product.name}`, onclick: async () => { const unitPrice = readDailyPrice(); if (unitPrice === null) return; try { await setEntry(product, Math.min(100000, Number(qty.value) + 1), unitPrice); } catch (error) { formError(error); } } }),
+    ]),
   ]);
   const priceControl = el('label', { class: 'daily-price-control' }, [
     el('span', { text: 'Price for this day' }), price,
@@ -313,7 +316,7 @@ function deliveryRow(product, isScheduled) {
   const actions = el('div', { class: 'delivery-actions' });
   actions.append(button(partiallyReceived ? 'Partial ✓' : received ? 'Received ✓' : 'Received', async () => { const unitPrice = readDailyPrice(); if (unitPrice === null) return; try { await setEntry(product, received ? null : product.defaultQuantity, unitPrice); } catch (error) { formError(error); } }, partiallyReceived ? 'partial-button small' : received ? 'received-button small' : 'secondary small'));
   actions.append(button(missed ? 'Missed ✓' : 'Missed', async () => { const unitPrice = readDailyPrice(); if (unitPrice === null) return; try { await setEntry(product, missed ? null : 0, unitPrice); } catch (error) { formError(error); } }, missed ? 'missed-button small' : 'secondary small'));
-  row.append(quantity, priceControl, actions);
+  row.append(quantityControl, priceControl, actions);
   return row;
 }
 function refreshMonthEntries(month) {

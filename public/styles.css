@@ -136,6 +136,7 @@ a { color: inherit; }
 .product-main small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
 .partial-receipt-label { display: block; margin-top: 5px; color: #805c12; font-size: 10px; font-weight: 700; }
 .schedule-tag { display: inline-flex; align-items: center; width: fit-content; margin-top: 6px; padding: 3px 6px; border-radius: 2px; background: #eff1eb; color: #5c675e; font: 9px "DM Mono", monospace; text-transform: uppercase; }
+.daily-quantity-control { display: grid; gap: 4px; justify-items: center; color: var(--muted); font-size: 10px; font-weight: 700; }
 .quantity-control { display: grid; grid-template-columns: 27px 54px 27px; align-items: center; justify-content: center; gap: 4px; }
 .stepper { width: 27px; height: 29px; border: 1px solid var(--line); border-radius: 3px; background: white; cursor: pointer; }
 .quantity-control input { width: 54px; height: 29px; border: 1px solid var(--line); border-radius: 3px; text-align: center; font: 12px "DM Mono", monospace; }
@@ -252,7 +253,7 @@ a { color: inherit; }
   .page-heading { font-size: 25px; }
   .section-head { align-items: start; }
   .delivery-row { grid-template-columns: minmax(0,1fr) auto; gap: 10px; padding: 12px; }
-  .quantity-control { grid-column: 1; justify-content: start; }
+  .daily-quantity-control { grid-column: 1; justify-items: start; }
   .daily-price-control { grid-column: 1; }
   .delivery-actions { grid-column: 2; grid-row: 1 / span 3; display: grid; }
   .delivery-actions .button { min-width: 71px; }
