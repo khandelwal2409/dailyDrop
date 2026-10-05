@@ -222,9 +222,9 @@ function scheduleLabel(product) {
   if (product.scheduleType === 'monthly') return `Monthly · day ${schedule.day}`;
   return { daily: 'Daily', alternate: 'Every other day', on_demand: 'On demand' }[product.scheduleType] || 'Daily';
 }
-async function setEntry(product, quantity) {
+async function setEntry(product, quantity, unitPrice) {
   if (quantity === null) await api(`/api/entries/${state.date}/${product.id}`, { method: 'DELETE' });
-  else await api(`/api/entries/${state.date}/${product.id}`, { method: 'PUT', body: { quantity } });
+  else await api(`/api/entries/${state.date}/${product.id}`, { method: 'PUT', body: { quantity, ...(unitPrice === undefined ? {} : { unitPrice }) } });
   await refreshMonthEntries(state.date.slice(0, 7));
   render();
 }
@@ -284,17 +284,36 @@ function deliveryRow(product, isScheduled) {
   const qty = el('input', { type: 'number', min: '1', max: '100000', step: '1', value: received ? entry.quantity : product.defaultQuantity, 'aria-label': `Quantity received for ${product.name}; ${product.defaultQuantity} expected`, onchange: async (event) => {
     const value = Number(event.target.value);
     if (!Number.isInteger(value) || value <= 0 || value > 100000) { event.target.value = received ? entry.quantity : product.defaultQuantity; return; }
-    try { await setEntry(product, value); } catch (error) { formError(error); }
+    const unitPrice = readDailyPrice();
+    if (unitPrice === null) return;
+    try { await setEntry(product, value, unitPrice); } catch (error) { formError(error); }
+  } });
+  function readDailyPrice() {
+    const value = Number(price.value);
+    if (!price.value.trim() || !Number.isFinite(value) || value < 0 || value > 1000000) {
+      notify('Enter a price from zero to 1,000,000.');
+      return null;
+    }
+    return value;
+  }
+  const price = el('input', { type: 'number', min: '0', max: '1000000', step: '.01', value: entry?.unit_price ?? product.price, 'aria-label': `Price per unit for ${product.name} on ${state.date}`, onchange: async (event) => {
+    const value = Number(event.target.value);
+    if (!event.target.value.trim() || !Number.isFinite(value) || value < 0 || value > 1000000) { event.target.value = entry?.unit_price ?? product.price; notify('Enter a price from zero to 1,000,000.'); return; }
+    if (!entry) { notify('Price will be saved when you record this delivery.'); return; }
+    try { await setEntry(product, entry.quantity, value); } catch (error) { formError(error); }
   } });
   const quantity = el('div', { class: 'quantity-control' }, [
-    el('button', { class: 'stepper', type: 'button', text: '−', 'aria-label': `Reduce quantity of ${product.name}`, onclick: async () => { try { await setEntry(product, Math.max(1, Number(qty.value) - 1)); } catch (error) { formError(error); } } }),
+    el('button', { class: 'stepper', type: 'button', text: '−', 'aria-label': `Reduce quantity of ${product.name}`, onclick: async () => { const unitPrice = readDailyPrice(); if (unitPrice === null) return; try { await setEntry(product, Math.max(1, Number(qty.value) - 1), unitPrice); } catch (error) { formError(error); } } }),
     qty,
-    el('button', { class: 'stepper', type: 'button', text: '+', 'aria-label': `Increase quantity of ${product.name}`, onclick: async () => { try { await setEntry(product, Math.min(100000, Number(qty.value) + 1)); } catch (error) { formError(error); } } }),
+    el('button', { class: 'stepper', type: 'button', text: '+', 'aria-label': `Increase quantity of ${product.name}`, onclick: async () => { const unitPrice = readDailyPrice(); if (unitPrice === null) return; try { await setEntry(product, Math.min(100000, Number(qty.value) + 1), unitPrice); } catch (error) { formError(error); } } }),
+  ]);
+  const priceControl = el('label', { class: 'daily-price-control' }, [
+    el('span', { text: 'Price for this day' }), price,
   ]);
   const actions = el('div', { class: 'delivery-actions' });
-  actions.append(button(partiallyReceived ? 'Partial ✓' : received ? 'Received ✓' : 'Received', async () => { try { await setEntry(product, received ? null : product.defaultQuantity); } catch (error) { formError(error); } }, partiallyReceived ? 'partial-button small' : received ? 'received-button small' : 'secondary small'));
-  actions.append(button(missed ? 'Missed ✓' : 'Missed', async () => { try { await setEntry(product, missed ? null : 0); } catch (error) { formError(error); } }, missed ? 'missed-button small' : 'secondary small'));
-  row.append(quantity, actions);
+  actions.append(button(partiallyReceived ? 'Partial ✓' : received ? 'Received ✓' : 'Received', async () => { const unitPrice = readDailyPrice(); if (unitPrice === null) return; try { await setEntry(product, received ? null : product.defaultQuantity, unitPrice); } catch (error) { formError(error); } }, partiallyReceived ? 'partial-button small' : received ? 'received-button small' : 'secondary small'));
+  actions.append(button(missed ? 'Missed ✓' : 'Missed', async () => { const unitPrice = readDailyPrice(); if (unitPrice === null) return; try { await setEntry(product, missed ? null : 0, unitPrice); } catch (error) { formError(error); } }, missed ? 'missed-button small' : 'secondary small'));
+  row.append(quantity, priceControl, actions);
   return row;
 }
 function refreshMonthEntries(month) {

@@ -127,7 +127,7 @@ a { color: inherit; }
 .stat-note { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
 .daily-list { display: grid; gap: 9px; }
 .daily-add-toolbar { margin-top: 16px; }
-.delivery-row { min-height: 85px; display: grid; grid-template-columns: minmax(170px, 1fr) minmax(95px, 140px) auto; align-items: center; gap: 16px; padding: 13px 15px; border: 1px solid var(--line); border-left: 3px solid #c7d0c6; border-radius: 4px; background: var(--surface); }
+.delivery-row { min-height: 85px; display: grid; grid-template-columns: minmax(150px, 1fr) minmax(95px, 140px) minmax(120px, 160px) auto; align-items: center; gap: 14px; padding: 13px 15px; border: 1px solid var(--line); border-left: 3px solid #c7d0c6; border-radius: 4px; background: var(--surface); }
 .delivery-row.received { border-left-color: var(--green); }
 .delivery-row.partial-receipt { border-left-color: #c58a18; background: #fff9e8; }
 .delivery-row.missed { border-left-color: var(--orange); }
@@ -139,6 +139,8 @@ a { color: inherit; }
 .quantity-control { display: grid; grid-template-columns: 27px 54px 27px; align-items: center; justify-content: center; gap: 4px; }
 .stepper { width: 27px; height: 29px; border: 1px solid var(--line); border-radius: 3px; background: white; cursor: pointer; }
 .quantity-control input { width: 54px; height: 29px; border: 1px solid var(--line); border-radius: 3px; text-align: center; font: 12px "DM Mono", monospace; }
+.daily-price-control { display: grid; gap: 4px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.daily-price-control input { width: 100%; min-height: 34px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); color: var(--ink); font-size: 12px; }
 .delivery-actions { display: flex; justify-content: flex-end; gap: 5px; }
 .delivery-actions .button { min-width: 74px; }
 .delivery-actions .received-button { border-color: #a5c6ad; background: var(--green-pale); color: var(--green-dark); }
@@ -251,7 +253,8 @@ a { color: inherit; }
   .section-head { align-items: start; }
   .delivery-row { grid-template-columns: minmax(0,1fr) auto; gap: 10px; padding: 12px; }
   .quantity-control { grid-column: 1; justify-content: start; }
-  .delivery-actions { grid-column: 2; grid-row: 1 / span 2; display: grid; }
+  .daily-price-control { grid-column: 1; }
+  .delivery-actions { grid-column: 2; grid-row: 1 / span 3; display: grid; }
   .delivery-actions .button { min-width: 71px; }
   .stats-grid { gap: 8px; }
   .stat { min-height: 88px; padding: 12px; }

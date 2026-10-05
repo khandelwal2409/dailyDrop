@@ -321,18 +321,22 @@ app.put('/api/entries/:date/:productId', requireAuth, async (req, res) => {
   const { date } = req.params;
   const productId = Number(req.params.productId);
   const quantity = req.body?.quantity;
-  if (!validDate(date) || !Number.isSafeInteger(productId) || !Number.isInteger(quantity) || quantity < 0 || quantity > 100_000) {
+  const hasUnitPrice = Object.hasOwn(req.body ?? {}, 'unitPrice');
+  const unitPrice = req.body?.unitPrice;
+  if (!validDate(date) || !Number.isSafeInteger(productId) || !Number.isInteger(quantity) || quantity < 0 || quantity > 100_000
+      || (hasUnitPrice && (!Number.isFinite(unitPrice) || unitPrice < 0 || unitPrice > 1_000_000))) {
     return fail(res, 400, 'Please provide a valid date and quantity.');
   }
   const product = await statements.productForUser.get(productId, req.user.id);
   if (!product) return fail(res, 404, 'Product not found.');
   const previous = await db.prepare('SELECT * FROM entries WHERE user_id = ? AND product_id = ? AND delivery_date = ?').get(req.user.id, productId, date);
+  const priceForEntry = hasUnitPrice ? unitPrice : previous?.unit_price ?? product.price;
   await db.prepare(`INSERT INTO entries (user_id, product_id, delivery_date, quantity, product_name, unit_price)
     VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, product_id, delivery_date) DO UPDATE SET
     quantity = excluded.quantity, product_name = CASE WHEN entries.product_name = '' THEN excluded.product_name ELSE entries.product_name END,
-    unit_price = CASE WHEN entries.quantity = 0 AND entries.product_name = '' THEN excluded.unit_price ELSE entries.unit_price END,
+    unit_price = excluded.unit_price,
     updated_at = CURRENT_TIMESTAMP`)
-    .run(req.user.id, productId, date, quantity, previous?.product_name || product.name, previous?.unit_price ?? product.price);
+    .run(req.user.id, productId, date, quantity, previous?.product_name || product.name, priceForEntry);
   res.json({ ok: true });
 });
 

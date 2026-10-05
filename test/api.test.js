@@ -105,8 +105,16 @@ test('accounts, delivery snapshots, reports, and seller payments stay scoped', a
   } });
   assert.equal(invalidSchedule.response.status, 400);
 
-  const entryResponse = await request(`/api/entries/2026-04-02/${productId}`, { cookie: sellerCookie, method: 'PUT', body: { quantity: 2 } });
+  const invalidUnitPrice = await request(`/api/entries/2026-04-02/${productId}`, { cookie: sellerCookie, method: 'PUT', body: { quantity: 2, unitPrice: 1000001 } });
+  assert.equal(invalidUnitPrice.response.status, 400);
+  const entryResponse = await request(`/api/entries/2026-04-02/${productId}`, { cookie: sellerCookie, method: 'PUT', body: { quantity: 2, unitPrice: 5.5 } });
   assert.equal(entryResponse.response.status, 200, output);
+  const dailyPriceOverride = await request('/api/entries?month=2026-04', { cookie: sellerCookie });
+  assert.equal(dailyPriceOverride.data.entries.find((entry) => entry.delivery_date === '2026-04-02').unit_price, 5.5);
+  assert.equal((await request('/api/payments/2026-04', { cookie: sellerCookie })).data.bill, 11);
+  assert.equal((await request('/api/products', { cookie: sellerCookie })).data.products[0].price, 4.5);
+  assert.equal((await request(`/api/entries/2026-04-02/${productId}`, { cookie: sellerCookie, method: 'PUT', body: { quantity: 2, unitPrice: 4.5 } })).response.status, 200);
+  assert.equal((await request('/api/payments/2026-04', { cookie: sellerCookie })).data.bill, 9);
   assert.equal((await request(`/api/entries/2026-04-02/${productId}`, { cookie: sellerCookie, method: 'PUT', body: { quantity: 1 } })).response.status, 200);
   const partialEntry = await request('/api/entries?month=2026-04', { cookie: sellerCookie });
   assert.equal(partialEntry.data.entries.find((entry) => entry.delivery_date === '2026-04-02').quantity, 1);
