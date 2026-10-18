@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 const databaseUrl = process.env.DATABASE_URL;
-export const databaseMode = process.env.NODE_ENV === 'production' || databaseUrl === 'memory:' ? 'postgres' : 'sqlite';
+export const databaseMode = process.env.NODE_ENV === 'production' || Boolean(databaseUrl) ? 'postgres' : 'sqlite';
 if (databaseMode === 'postgres' && process.env.NODE_ENV === 'production' && !databaseUrl) {
   throw new Error('DATABASE_URL is missing. Set it in the Render web service Environment settings using the PostgreSQL Internal Database URL.');
 }

@@ -13,7 +13,7 @@ DailyDrop is a small household delivery ledger. It records scheduled and on-dema
 npm install
 ```
 
-Copy `.env.example` to `.env`, then run `npm start`. Local development uses SQLite at `data/dailydrop.sqlite` by default; change `DB_PATH` to use another file. `npm start` and `npm run dev` load `.env` automatically; open `http://localhost:3000`. `npm test` exercises the local SQLite API and the PostgreSQL migration path.
+Copy `.env.example` to `.env`, then run `npm start`. Local development uses SQLite at `data/dailydrop.sqlite` by default; change `DB_PATH` to use another file. To use Neon PostgreSQL locally, set `DATABASE_URL` in `.env` to your Neon connection string (including `sslmode=require`); when it is set, the app uses PostgreSQL and leaves `NODE_ENV=development`. Keep the URL private. `npm start` and `npm run dev` load `.env` automatically; open `http://localhost:3000`. `npm test` exercises the local SQLite API and the PostgreSQL migration path.
 
 ## Install on a phone
 
@@ -46,7 +46,7 @@ Register using that exact username (case-insensitive). When `SELLER_USERNAMES` i
 | `PORT` | `3000` | HTTP listener port; the host-provided value is respected. |
 | `NODE_ENV` | unset | Set to `production` behind HTTPS to enable Secure cookies and HSTS. |
 | `DB_PATH` | `data/dailydrop.sqlite` | Local SQLite database path. Ignored by Git. |
-| `DATABASE_URL` | required in production | PostgreSQL connection string. Set it in Render's service environment using the database's Internal Database URL. |
+| `DATABASE_URL` | unset locally; required in production | PostgreSQL connection string. Set it locally to use Neon, or in Render's service environment using the database's Internal Database URL. |
 | `SQLITE_MIGRATION_PATH` | unset | In production, optional path to an old SQLite database; imported once before the server begins listening. |
 | `ALLOW_REGISTRATION` | `true` | Set to `false` to disable new account registration. |
 | `SELLER_USERNAMES` | unset | Comma-separated seller usernames; when set, this is the source of truth. |
