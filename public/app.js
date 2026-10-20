@@ -5,7 +5,7 @@ const moneyFormat = new Intl.NumberFormat('en-IN', { style: 'currency', currency
 const fullDateFormat = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 const monthFormat = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
 const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const state = { user: null, view: sellerAccessUrl ? 'seller' : 'daily', authMode: 'login', date: today(), month: currentMonth(), products: [], entries: [], busy: false, message: '' };
+const state = { user: null, view: sellerAccessUrl ? 'seller' : 'daily', authMode: 'login', date: today(), month: currentMonth(), products: [], entries: [], vacations: [], busy: false, message: '' };
 let toastTimer;
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -195,7 +195,11 @@ function sectionHead(title, note = '') {
   return el('div', { class: 'section-head' }, [el('div', {}, [el('h2', { text: title }), ...(note ? [el('p', { text: note })] : [])])]);
 }
 function entryFor(productId, date = state.date) { return state.entries.find((entry) => entry.product_id === productId && entry.delivery_date === date); }
+function vacationFor(date, vacations = state.vacations) {
+  return vacations.find((vacation) => vacation.startDate <= date && vacation.endDate >= date);
+}
 function dayScheduled(product, date) {
+  if (vacationFor(date)) return false;
   const day = new Date(`${date}T00:00:00Z`);
   const schedule = product.schedule || {};
   if (['alternate', 'every_n'].includes(product.scheduleType) && date < schedule.startDate) return false;
@@ -230,7 +234,13 @@ async function setEntry(product, quantity, unitPrice) {
 }
 function renderDaily(content) {
   content.append(...heading('Delivery log', 'Today, accounted for.', 'Record the drop as it happens. Adjust quantities whenever the doorstep tells a different story.'));
-  const scheduled = state.products.filter((product) => dayScheduled(product, state.date));
+  renderVacationManager(content);
+  const vacation = vacationFor(state.date);
+  if (vacation) content.append(el('div', { class: 'vacation-notice' }, [
+    el('strong', { text: 'Vacation period · scheduled deliveries paused' }),
+    el('span', { text: `${vacation.startDate} – ${vacation.endDate}${vacation.note ? ` · ${vacation.note}` : ''}` }),
+  ]));
+  const scheduled = vacation ? [] : state.products.filter((product) => dayScheduled(product, state.date));
   const unscheduled = state.products.filter((product) => !dayScheduled(product, state.date) && entryFor(product.id));
   const done = scheduled.filter((product) => entryFor(product.id)?.quantity > 0).length;
   const missed = scheduled.filter((product) => entryFor(product.id)?.quantity === 0).length;
@@ -244,10 +254,12 @@ function renderDaily(content) {
     sectionHead('Monthly delivery calendar', `${state.month} · received vs missed across the month`),
     buildCalendar(state.month, state.products, monthEntries),
   ]));
-  content.append(sectionHead('Scheduled deliveries', `${state.date} · ${due} expected`));
+  content.append(sectionHead(vacation ? 'Deliveries paused' : 'Scheduled deliveries', `${state.date} · ${due} expected`));
   const list = el('div', { class: 'daily-list' });
   for (const product of scheduled) list.append(deliveryRow(product, true));
-  if (!scheduled.length) list.append(el('div', { class: 'empty-state' }, [el('strong', { text: 'A quiet doorstep.' }), el('br'), 'No products are scheduled for this date. You can still record an unscheduled delivery below.']));
+  if (!scheduled.length) list.append(el('div', { class: 'empty-state' }, vacation
+    ? 'Scheduled deliveries are paused for this customer during the vacation period.'
+    : [el('strong', { text: 'A quiet doorstep.' }), el('br'), 'No products are scheduled for this date. You can still record an unscheduled delivery below.']));
   content.append(list);
   if (unscheduled.length) {
     content.append(sectionHead('Unscheduled deliveries', 'Recorded outside the product schedule'));
@@ -255,7 +267,7 @@ function renderDaily(content) {
     for (const product of unscheduled) extra.append(deliveryRow(product, false));
     content.append(extra);
   }
-  const available = state.products.filter((product) => !scheduled.includes(product) && !unscheduled.includes(product));
+  const available = vacation ? [] : state.products.filter((product) => !scheduled.includes(product) && !unscheduled.includes(product));
   if (available.length) {
     const add = el('div', { class: 'toolbar daily-add-toolbar' });
     const pick = selectField('Record an unscheduled delivery', 'unscheduled-product', available.map((product) => [String(product.id), product.name]), String(available[0].id));
@@ -265,6 +277,52 @@ function renderDaily(content) {
     }, 'secondary'));
     content.append(add);
   }
+}
+function renderVacationManager(content) {
+  const panel = el('section', { class: 'panel panel-pad vacation-management' }, [
+    sectionHead('Your vacation periods', 'Pause scheduled deliveries while you are away. Dates are inclusive; paused dates are excluded from billing.'),
+  ]);
+  const form = el('form', { class: 'vacation-form' });
+  const start = field('Start date', 'vacation-start', 'date', state.date, { required: true });
+  const end = field('End date', 'vacation-end', 'date', state.date, { required: true });
+  const note = field('Note (optional)', 'vacation-note', 'text', '', { maxlength: 200 });
+  const add = el('button', { type: 'submit', class: 'button secondary', text: 'Add vacation' });
+  form.append(start.wrap, end.wrap, note.wrap, add);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    add.disabled = true;
+    try {
+      await api('/api/vacations', { method: 'POST', body: { startDate: start.control.value, endDate: end.control.value, note: note.control.value } });
+      await refreshVacations();
+      notify('Vacation period saved. Scheduled deliveries will be paused.');
+      render();
+    } catch (error) {
+      formError(error);
+      add.disabled = false;
+    }
+  });
+  panel.append(form);
+  if (state.vacations.length) {
+    const periods = el('div', { class: 'vacation-periods' });
+    for (const vacation of state.vacations) {
+      periods.append(el('div', { class: 'vacation-period' }, [
+        el('span', { text: `${vacation.startDate} – ${vacation.endDate}${vacation.note ? ` · ${vacation.note}` : ''}` }),
+        button('Remove', async () => {
+          if (!window.confirm(`Remove your vacation from ${vacation.startDate} through ${vacation.endDate}?`)) return;
+          try {
+            await api(`/api/vacations/${vacation.id}`, { method: 'DELETE' });
+            await refreshVacations();
+            notify('Vacation period removed.');
+            render();
+          } catch (error) { formError(error); }
+        }, 'danger small'),
+      ]));
+    }
+    panel.append(periods);
+  } else {
+    panel.append(el('div', { class: 'empty-state vacation-empty', text: 'You have not added any vacation periods.' }));
+  }
+  content.append(panel);
 }
 function stat(label, value, note) {
   return el('div', { class: 'stat' }, [el('span', { class: 'stat-label', text: label }), el('strong', { class: 'stat-value', text: value }), el('small', { class: 'stat-note', text: note })]);
@@ -365,7 +423,8 @@ function buildCalendar(month, products, entries) {
   for (let index = 0; index < offset; index += 1) grid.append(el('div', { class: 'calendar-day blank', 'aria-hidden': 'true' }));
   for (let number = 1; number <= days; number += 1) {
     const date = `${month}-${String(number).padStart(2, '0')}`;
-    const scheduled = products.filter((product) => dayScheduled(product, date));
+    const vacation = vacationFor(date);
+    const scheduled = vacation ? [] : products.filter((product) => dayScheduled(product, date));
     const dayEntries = entries.filter((entry) => entry.delivery_date === date);
     const scheduledEntries = scheduled.map((product) => dayEntries.find((entry) => entry.product_id === product.id)).filter(Boolean);
     const scheduledProductsById = new Map(scheduled.map((product) => [product.id, product]));
@@ -375,7 +434,10 @@ function buildCalendar(month, products, entries) {
     const open = scheduled.length - scheduledEntries.length;
     let status = '';
     let mark = '';
-    if (scheduled.length) {
+    if (vacation) {
+      status = 'vacation';
+      mark = 'Vacation';
+    } else if (scheduled.length) {
       if (fullyReceived === scheduled.length) { status = 'received'; mark = `${fullyReceived} received`; }
       else if (partiallyReceived) {
         status = 'partial';
@@ -411,7 +473,7 @@ function buildCalendar(month, products, entries) {
   }
   wrap.append(grid);
   wrap.append(el('div', { class: 'legend' }, [
-    legend('received-key', 'Received'), legend('partial-key', 'Partial'), legend('missed-key', 'Missed'), legend('open-key', 'No scheduled delivery'),
+    legend('received-key', 'Received'), legend('partial-key', 'Partial'), legend('missed-key', 'Missed'), legend('vacation-key', 'Vacation'), legend('open-key', 'No scheduled delivery'),
   ]));
   return wrap;
 }
@@ -780,9 +842,14 @@ async function renderSeller(content) {
 
 async function refreshData() {
   if (!state.user) return;
-  const [products] = await Promise.all([api('/api/products'), refreshMonthEntries(state.date.slice(0, 7))]);
+  const [products, vacations] = await Promise.all([api('/api/products'), api('/api/vacations'), refreshMonthEntries(state.date.slice(0, 7))]);
   state.products = products.products;
+  state.vacations = vacations.vacations;
   state.month = state.date.slice(0, 7);
+}
+async function refreshVacations() {
+  const result = await api('/api/vacations');
+  state.vacations = result.vacations;
 }
 async function render() {
   if (!state.user) {

@@ -63,13 +63,17 @@ export async function migrateSqliteToPostgres(sourcePath, { resetSequences = tru
     const sessions = readRows(sqlite, tables, 'sessions', [
       ['token_hash', "''"], ['user_id', 'NULL'], ['expires_at', '0'], ['created_at', 'CURRENT_TIMESTAMP'],
     ]);
+    const vacations = readRows(sqlite, tables, 'vacation_periods', [
+      ['id', 'NULL'], ['user_id', 'NULL'], ['start_date', "''"], ['end_date', "''"], ['note', "''"],
+      ['created_by', 'NULL'], ['created_at', 'CURRENT_TIMESTAMP'],
+    ]);
 
     await client.query('BEGIN');
     inTransaction = true;
     const existing = await client.query(`SELECT
       (SELECT COUNT(*) FROM users) + (SELECT COUNT(*) FROM sessions) +
       (SELECT COUNT(*) FROM products) + (SELECT COUNT(*) FROM entries) +
-      (SELECT COUNT(*) FROM payments) AS count`);
+      (SELECT COUNT(*) FROM payments) + (SELECT COUNT(*) FROM vacation_periods) AS count`);
     if (Number(existing.rows[0].count) > 0) throw new Error('PostgreSQL already contains data; refusing to merge or overwrite it.');
 
     await insertRows(client, 'users', [
@@ -87,9 +91,12 @@ export async function migrateSqliteToPostgres(sourcePath, { resetSequences = tru
     await insertRows(client, 'sessions', [
       ['token_hash'], ['user_id'], ['expires_at'], ['created_at'],
     ], sessions);
+    await insertRows(client, 'vacation_periods', [
+      ['id'], ['user_id'], ['start_date'], ['end_date'], ['note'], ['created_by'], ['created_at'],
+    ], vacations);
 
     if (resetSequences) {
-      for (const [table, rows] of [['users', users], ['products', products], ['entries', entries]]) {
+      for (const [table, rows] of [['users', users], ['products', products], ['entries', entries], ['vacation_periods', vacations]]) {
         const nextId = rows.reduce((maximum, row) => Math.max(maximum, row.id + 1), 1);
         await client.query(`ALTER TABLE ${table} ALTER COLUMN id RESTART WITH ${nextId}`);
       }
@@ -97,7 +104,7 @@ export async function migrateSqliteToPostgres(sourcePath, { resetSequences = tru
     await client.query('INSERT INTO app_migrations (name) VALUES ($1)', ['sqlite-import-v1']);
     await client.query('COMMIT');
     inTransaction = false;
-    return { users: users.length, sessions: sessions.length, products: products.length, entries: entries.length, payments: payments.length };
+    return { users: users.length, sessions: sessions.length, products: products.length, entries: entries.length, payments: payments.length, vacations: vacations.length };
   } catch (error) {
     if (inTransaction) await client.query('ROLLBACK');
     throw error;
