@@ -51,7 +51,7 @@ test('imports legacy SQLite account, product, entry, session, and payment data',
   sqlite.close();
 
   const counts = await migrateSqliteToPostgres(sourcePath, { resetSequences: false });
-  assert.deepEqual(counts, { users: 1, sessions: 1, products: 1, entries: 1, payments: 1 });
+  assert.deepEqual(counts, { users: 1, sessions: 1, products: 1, entries: 1, payments: 1, vacations: 0 });
   const user = await pool.query('SELECT id, username, is_seller FROM users');
   assert.deepEqual(user.rows[0], { id: 41, username: 'legacy', is_seller: true });
   const entry = await pool.query('SELECT id, product_name, unit_price FROM entries');

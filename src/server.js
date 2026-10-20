@@ -245,6 +245,32 @@ app.post('/api/auth/logout', requireAuth, async (req, res) => {
 
 app.get('/api/me', requireAuth, (req, res) => res.json({ user: publicUser(req.user) }));
 
+app.get('/api/vacations', requireAuth, async (req, res) => {
+  const vacations = await db.prepare(`SELECT id, start_date AS "startDate", end_date AS "endDate", note
+    FROM vacation_periods WHERE user_id = ? ORDER BY start_date`).all(req.user.id);
+  res.json({ vacations });
+});
+
+app.post('/api/vacations', requireAuth, async (req, res) => {
+  const { startDate, endDate, note = '' } = req.body ?? {};
+  if (!validDate(startDate) || !validDate(endDate) || endDate < startDate
+      || !boundedText(note, 200, { optional: true })) return fail(res, 400, 'Please provide valid vacation dates and a note of at most 200 characters.');
+  const overlap = await db.prepare(`SELECT id FROM vacation_periods
+    WHERE user_id = ? AND start_date <= ? AND end_date >= ? LIMIT 1`).get(req.user.id, endDate, startDate);
+  if (overlap) return fail(res, 409, 'This vacation overlaps an existing vacation period.');
+  const result = await db.prepare(`INSERT INTO vacation_periods (user_id, start_date, end_date, note, created_by)
+    VALUES (?, ?, ?, ?, ?) RETURNING id`).run(req.user.id, startDate, endDate, note.trim(), req.user.id);
+  res.status(201).json({ id: Number(result.lastInsertRowid) });
+});
+
+app.delete('/api/vacations/:vacationId', requireAuth, async (req, res) => {
+  const vacationId = Number(req.params.vacationId);
+  if (!Number.isSafeInteger(vacationId)) return fail(res, 400, 'Please provide a valid vacation.');
+  const result = await db.prepare('DELETE FROM vacation_periods WHERE id = ? AND user_id = ?').run(vacationId, req.user.id);
+  if (!result.changes) return fail(res, 404, 'Vacation period not found.');
+  res.json({ ok: true });
+});
+
 app.put('/api/me', requireAuth, async (req, res) => {
   const { fullName, email, phone, address } = req.body ?? {};
   if (!boundedText(fullName, 100, { optional: true }) || !boundedText(email, 254, { optional: true })
@@ -329,6 +355,9 @@ app.put('/api/entries/:date/:productId', requireAuth, async (req, res) => {
   }
   const product = await statements.productForUser.get(productId, req.user.id);
   if (!product) return fail(res, 404, 'Product not found.');
+  const vacation = await db.prepare(`SELECT 1 FROM vacation_periods
+    WHERE user_id = ? AND ? BETWEEN start_date AND end_date LIMIT 1`).get(req.user.id, date);
+  if (vacation) return fail(res, 409, 'Deliveries are paused during this customer vacation period.');
   const previous = await db.prepare('SELECT * FROM entries WHERE user_id = ? AND product_id = ? AND delivery_date = ?').get(req.user.id, productId, date);
   const priceForEntry = hasUnitPrice ? unitPrice : previous?.unit_price ?? product.price;
   await db.prepare(`INSERT INTO entries (user_id, product_id, delivery_date, quantity, product_name, unit_price)
@@ -388,7 +417,11 @@ app.get('/api/seller/bills', requireAuth, requireSeller, async (req, res) => {
   const subscriptions = await db.prepare(`SELECT user_id, name, default_quantity, schedule_type, schedule_config
     FROM products ORDER BY user_id, lower(name)`).all();
   const entries = await db.prepare(`SELECT user_id, product_id, product_name, unit_price, quantity, delivery_date
-    FROM entries WHERE delivery_date >= ? AND delivery_date < ? ORDER BY user_id, product_name, delivery_date`).all(start, next);
+    FROM entries WHERE delivery_date >= ? AND delivery_date < ?
+      AND NOT EXISTS (SELECT 1 FROM vacation_periods
+        WHERE vacation_periods.user_id = entries.user_id
+          AND entries.delivery_date BETWEEN vacation_periods.start_date AND vacation_periods.end_date)
+    ORDER BY user_id, product_name, delivery_date`).all(start, next);
   const payments = await db.prepare('SELECT user_id, amount, method, note, updated_at AS "updatedAt" FROM payments WHERE payment_month = ?').all(month);
   const paymentByUser = new Map(payments.map((payment) => [payment.user_id, payment]));
   const subscriptionsByUser = new Map();

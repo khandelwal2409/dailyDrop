@@ -88,4 +88,6 @@ The application serves from its workspace directory and has no frontend build st
 
 Schedules support daily, alternate-day, every-N-day, weekday, monthly-day, and on-demand products. Monthly schedules that request a date beyond a month's length use the final day of that month. An entry records the product name and unit price at receipt time; editing or deleting a product does not rewrite historical bills. A missed entry has quantity zero and contributes no amount. Bills and reports are calculated from received entries. Each user/month has one seller-maintained payment amount, which may be partial.
 
+Customers can add and remove their own multiple non-overlapping vacation periods from the Delivery log. The date range is inclusive, and an optional note can be added. Scheduled deliveries are paused during those dates: they do not appear as missed or count toward bills or reports, and delivery entries cannot be recorded for vacation dates. Vacation periods are shown on the customer's calendar and delivery view. Removing a vacation restores the normal schedule.
+
 Displayed currency uses the browser's locale with USD as the currency code. Change the `moneyFormat` currency in `public/app.js` if the deployment serves a different currency region.

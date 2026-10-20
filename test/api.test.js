@@ -153,6 +153,52 @@ test('accounts, delivery snapshots, reports, and seller payments stay scoped', a
 
   assert.equal((await request(`/api/entries/2026-04-02/${productId}`, { cookie: sellerCookie, method: 'DELETE' })).response.status, 200);
   assert.equal((await request('/api/entries?month=2026-04', { cookie: sellerCookie })).data.entries.length, 1);
+  const customerVacation = await request('/api/vacations', {
+    cookie: userCookie, method: 'POST', body: { startDate: '2026-06-01', endDate: '2026-06-02' },
+  });
+  assert.equal(customerVacation.response.status, 201);
+  assert.equal((await request('/api/vacations', { cookie: userCookie })).data.vacations.length, 1);
+  assert.equal((await request(`/api/vacations/${customerVacation.data.id}`, {
+    cookie: userCookie, method: 'DELETE',
+  })).response.status, 200);
+  assert.equal((await request(`/api/seller/customers/${sellerId}/vacations`, {
+    cookie: sellerCookie, method: 'POST', body: { startDate: '2026-04-03', endDate: '2026-04-05' },
+  })).response.status, 404);
+  const vacation = await request('/api/vacations', {
+    cookie: sellerCookie,
+    method: 'POST',
+    body: { startDate: '2026-04-03', endDate: '2026-04-05', note: 'Family trip' },
+  });
+  assert.equal(vacation.response.status, 201);
+  assert.equal((await request(`/api/vacations/${vacation.data.id}`, {
+    cookie: userCookie, method: 'DELETE',
+  })).response.status, 404);
+  assert.equal((await request('/api/vacations', {
+    cookie: sellerCookie, method: 'POST', body: { startDate: '2026-04-05', endDate: '2026-04-08' },
+  })).response.status, 409);
+  assert.equal((await request('/api/vacations', {
+    cookie: sellerCookie, method: 'POST', body: { startDate: '2026-04-09', endDate: '2026-04-08' },
+  })).response.status, 400);
+  assert.deepEqual((await request('/api/vacations', { cookie: sellerCookie })).data.vacations, [
+    { id: vacation.data.id, startDate: '2026-04-03', endDate: '2026-04-05', note: 'Family trip' },
+  ]);
+  assert.equal((await request('/api/entries?month=2026-04', { cookie: sellerCookie })).data.entries.length, 0);
+  assert.equal((await request('/api/payments/2026-04', { cookie: sellerCookie })).data.bill, 0);
+  const vacationReport = await request('/api/reports/monthly-totals?to=2026-04&months=1', { cookie: sellerCookie });
+  assert.deepEqual(vacationReport.data.totals[0], { month: '2026-04', total: 0, deliveries: 0, missed: 0 });
+  assert.equal((await request(`/api/entries/2026-04-03/${productId}`, {
+    cookie: sellerCookie, method: 'PUT', body: { quantity: 1 },
+  })).response.status, 409);
+  const secondVacation = await request('/api/vacations', {
+    cookie: sellerCookie,
+    method: 'POST',
+    body: { startDate: '2026-04-10', endDate: '2026-04-11' },
+  });
+  assert.equal(secondVacation.response.status, 201);
+  assert.equal((await request(`/api/vacations/${vacation.data.id}`, {
+    cookie: sellerCookie, method: 'DELETE',
+  })).response.status, 200);
+  assert.equal((await request('/api/entries?month=2026-04', { cookie: sellerCookie })).data.entries.length, 1);
   assert.equal((await request(`/api/products/${productId}`, { cookie: sellerCookie, method: 'DELETE' })).response.status, 200);
   const afterDelete = await request('/api/entries?month=2026-04', { cookie: sellerCookie });
   assert.equal(afterDelete.data.entries[0].product_name, 'Oats');
