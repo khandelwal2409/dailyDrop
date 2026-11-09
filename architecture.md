@@ -8,18 +8,33 @@ DailyDrop is a single-process web application with a static browser client and a
 flowchart LR
   User[User / Seller] --> Browser[Browser app in public/]
   Browser -->|fetch JSON + cookie| API[Express API in src/server.js]
-  API --> Validation[Input validation and auth checks]
-  Validation --> DB{Environment}
+  API --> Auth[Shared authentication]
+  API --> CustomerRoutes[Customer routes]
+  API --> SellerRoutes[Seller routes]
+  Auth --> CustomerRoutes
+  Auth --> SellerRoutes
+  CustomerRoutes --> CustomerService[Customer service]
+  CustomerService --> CustomerRepository[Customer repository]
+  SellerRoutes --> SellerService[Seller service]
+  SellerService --> SellerRepository[Seller repository]
+  CustomerService --> Shared[Shared validation and billing]
+  SellerService --> Shared
+  CustomerRepository --> DB{Environment}
+  SellerRepository --> DB
   DB -->|Local| SQLite[SQLite via src/db.js]
   DB -->|Render production| Postgres[PostgreSQL via src/db.js]
-  DB --> Reports[Bill / Report / Seller calculations]
-  Reports --> Browser
+  CustomerRoutes --> Browser
+  SellerRoutes --> Browser
 ```
 
 ## Project structure
 
 - `public/`: static frontend assets (`index.html`, `styles.css`, `app.js`)
-- `src/server.js`: HTTP middleware, route handling, validation, session logic, billing/reporting endpoints
+- `src/server.js`: app setup, shared middleware, route registration, and server startup
+- `src/packages/customers/`: customer routes, use-case services, and persistence repository
+- `src/packages/sellers/`: seller routes, use-case services, and persistence repository
+- `src/routes/auth.js`: shared registration, login, logout, and public configuration APIs
+- `src/shared/`: reusable authentication, session, validation, billing, HTTP-response, and rate-limit helpers
 - `src/db.js`: SQLite/PostgreSQL selection, schema initialization, and parameterized queries
 - `scripts/migrate-sqlite-to-postgres.js`: one-time import of existing SQLite data
 - `test/`: integration tests for API behavior and security boundaries
@@ -57,9 +72,17 @@ User sessions are managed with a signed, HttpOnly cookie and a server-side token
 - login validates the username/password with a per-user salt and scrypt hash
 - a session token is generated and saved as a SHA-256 hash
 - the cookie is set with `HttpOnly`, `SameSite=Lax`, and `Secure` in production
-- protected endpoints call `requireAuth`, which resolves the session and attaches the authenticated user to the request
+- customer and seller routers receive the shared `requireAuth` middleware, which resolves the session and attaches the authenticated user to the request
+- seller endpoints additionally apply the seller-role middleware
 
-### 4. Product and delivery flow
+### 4. API packages
+
+- The customer package owns profile, vacation, product, delivery, reporting, and customer payment endpoints. Its routes delegate use cases to a service, which uses a repository for persistence.
+- The seller package owns seller overview, monthly bill summaries, and payment-management endpoints, with the same route/service/repository separation.
+- Authentication and common validation/billing behavior live outside those packages so both can reuse them.
+- `src/server.js` composes the packages and injects dependencies; existing `/api/...` URLs remain unchanged.
+
+### 5. Product and delivery flow
 
 Products are authored by a user with:
 
@@ -80,7 +103,7 @@ Delivery entries store:
 
 This snapshot pattern prevents historical bills from changing if a product is later edited or removed.
 
-### 5. Billing and reporting flow
+### 6. Billing and reporting flow
 
 Bills are derived from entries with quantity greater than zero and use the stored unit-price snapshot at the time the delivery was recorded.
 

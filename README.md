@@ -1,6 +1,6 @@
 # DailyDrop
 
-DailyDrop is a small household delivery ledger. It records scheduled and on-demand receipts, builds bills from historical delivery snapshots, and gives sellers a monthly payment directory. The frontend is plain HTML, CSS, and JavaScript; the server logic lives under `src/`, while the static browser client remains in `public/`.
+DailyDrop is a small household delivery ledger. It records scheduled and on-demand receipts, builds bills from historical delivery snapshots, and gives sellers a monthly payment directory. The frontend is plain HTML, CSS, and JavaScript; the API is organized into customer and seller packages under `src/packages/`, with shared authentication and business helpers under `src/shared/`. The static browser client remains in `public/`.
 
 ## Requirements
 
